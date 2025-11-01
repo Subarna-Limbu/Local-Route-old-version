@@ -614,7 +614,7 @@
 
 
 {% if route and bus %}
-// ==================== LOCATION TRACKING SYSTEM ====================
+// ==================== LOCATION TRACKING SYSTEM (FIXED VERSION) ====================
 let socket;
 let geoWatchId = null;
 let lastSentLocation = null;
@@ -681,6 +681,7 @@ startBtn.addEventListener('click', function() {
         
         console.log('Starting geolocation watch...');
         
+        // ⭐ FIXED: Use continuous watchPosition WITHOUT interval
         geoWatchId = navigator.geolocation.watchPosition(
             function(position) {
                 const lat = position.coords.latitude;
@@ -693,6 +694,12 @@ startBtn.addEventListener('click', function() {
                     accuracy: accuracy.toFixed(0) + 'm'
                 });
                 
+                // Ignore poor accuracy readings
+                if (accuracy > 100) {
+                    console.log(`⚠️ Ignoring low-accuracy GPS: ${accuracy.toFixed(0)}m`);
+                    return;
+                }
+                
                 // Check if location changed significantly
                 let shouldSend = true;
                 if (lastSentLocation) {
@@ -701,9 +708,12 @@ startBtn.addEventListener('click', function() {
                         lat, lng
                     );
                     
-                    if (distance < MIN_DISTANCE_CHANGE) {
+                    const timeSinceLastSend = (Date.now() - (lastSentLocation.timestamp || 0)) / 1000;
+                    
+                    // Send if moved >10m OR 3 seconds passed
+                    if (distance < MIN_DISTANCE_CHANGE && timeSinceLastSend < 3) {
                         shouldSend = false;
-                        console.log(`⏭️ Skipping (moved only ${distance.toFixed(1)}m)`);
+                        console.log(`⏭️ Skipping (moved only ${distance.toFixed(1)}m, ${timeSinceLastSend.toFixed(1)}s)`);
                     }
                 }
                 
@@ -715,7 +725,7 @@ startBtn.addEventListener('click', function() {
                     };
                     
                     socket.send(JSON.stringify(data));
-                    lastSentLocation = { lat: lat, lng: lng };
+                    lastSentLocation = { lat: lat, lng: lng, timestamp: Date.now() };
                     console.log('📤 Location sent to server');
                 }
             }, 
@@ -746,224 +756,9 @@ startBtn.addEventListener('click', function() {
         console.log('✅ Geolocation watch started');
     };
     
-// ⭐ IMPROVED: Smart GPS filtering - smooth when stationary, raw when moving
-let gpsUpdateInterval = null;
-let lastKnownPosition = null;
-let recentPositions = []; // Track recent positions for movement detection
-const POSITION_BUFFER_SIZE = 3;
-let isDriverMoving = false;
-let gpsReadingsCount = 0; // ⭐ ADD THIS
-let gpsStabilized = false; // ⭐ ADD THIS
-let firstGoodReading = false;
-
-// ⭐ Detect if driver is actually moving
-function detectMovement(lat, lng) {
-    recentPositions.push({ lat, lng, timestamp: Date.now() });
-    
-    // Keep only last 3 positions
-    if (recentPositions.length > POSITION_BUFFER_SIZE) {
-        recentPositions.shift();
-    }
-    
-    // Need at least 2 positions to detect movement
-    if (recentPositions.length < 2) {
-        return false;
-    }
-    
-    // Check if driver moved significantly in last 2 readings
-    const last = recentPositions[recentPositions.length - 1];
-    const previous = recentPositions[recentPositions.length - 2];
-    
-    const distance = calculateDistance(
-        previous.lat, previous.lng,
-        last.lat, last.lng
-    );
-    
-    // Driver is moving if traveled >5m between readings
-    return distance > 20;
-}
-
-// ⭐ Simple noise filter - only removes small jitter
-function filterJitter(lat, lng) {
-    if (recentPositions.length === 0) {
-        return { lat, lng };
-    }
-    
-    const last = recentPositions[recentPositions.length - 1];
-    const distance = calculateDistance(last.lat, last.lng, lat, lng);
-
-    // If movement < 15m, assume it's GPS noise and keep previous position
-    if (distance < 15) {
-        return { lat: last.lat, lng: last.lng };
-    }
-    
-    // Otherwise use the new position (driver is actually moving)
-    return { lat, lng };
-}
-
-socket.onopen = function() {
-    console.log('✅ WebSocket connected');
-    status.style.display = 'block';
-    status.innerHTML = '✅ Tracking started successfully!';
-    startBtn.disabled = true;
-    stopBtn.disabled = false;
-    
-    lastSentLocation = null;
-    recentPositions = []; // ⭐ Reset
-    isDriverMoving = false;
-        gpsReadingsCount = 0; // ⭐ RESET
-    gpsStabilized = false; // ⭐ RESET
-    
-    const geoOptions = {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 0
+    socket.onmessage = function(event) {
+        console.log('📨 Server message:', event.data);
     };
-    
-    console.log('Starting geolocation watch...');
-    
- geoWatchId = navigator.geolocation.watchPosition(
-    function(position) {
-        const rawLat = position.coords.latitude;
-        const rawLng = position.coords.longitude;
-        const accuracy = position.coords.accuracy;
-        
-        // ⭐ SMART WARMUP: Accept if accuracy is good, regardless of reading count
-        if (!gpsStabilized) {
-            if (accuracy <= 30) {
-                // GPS accuracy is good enough - start immediately!
-                gpsStabilized = true;
-                firstGoodReading = true;
-                status.innerHTML = '✅ GPS locked! Tracking active.';
-                console.log(`✅ GPS stabilized immediately (accuracy: ${accuracy.toFixed(0)}m)`);
-            } else {
-                // Still waiting for good accuracy
-                console.log(`🔄 GPS warming up... (accuracy: ${accuracy.toFixed(0)}m, need <30m)`);
-                status.innerHTML = `🔄 GPS warming up... (accuracy: ${accuracy.toFixed(0)}m)`;
-                return; // ⭐ Skip this reading
-            }
-        }
-        
-        // ⭐ After stabilization, still ignore readings with accuracy >50m
-        if (accuracy > 50) {
-            console.log(`⚠️ Ignoring low-accuracy GPS: ${accuracy.toFixed(0)}m`);
-            return;
-        }
-
-        // ⭐ NEW: Completely reject terrible accuracy
-if (accuracy > 100) {
-    console.log(`❌ GPS accuracy too poor: ${accuracy.toFixed(0)}m - skipping completely`);
-    return;
-}
-            
-            // ⭐ Detect if driver is moving
-            const moving = detectMovement(rawLat, rawLng);
-            
-            let lat, lng;
-            
-            if (moving) {
-                // ⭐ Driver is MOVING - use RAW GPS (no smoothing)
-                lat = rawLat;
-                lng = rawLng;
-                isDriverMoving = true;
-                console.log(`🚗 MOVING: Using raw GPS (${lat.toFixed(6)}, ${lng.toFixed(6)})`);
-            } else {
-                // ⭐ Driver is STATIONARY - filter small jitter
-                const filtered = filterJitter(rawLat, rawLng);
-                lat = filtered.lat;
-                lng = filtered.lng;
-                isDriverMoving = false;
-                console.log(`🛑 STATIONARY: Using filtered GPS (raw was ${rawLat.toFixed(6)}, ${rawLng.toFixed(6)})`);
-            }
-            
-            // Update last known position
-            lastKnownPosition = { lat, lng, accuracy, moving };
-            
-            console.log('📍 GPS:', {
-                raw: `${rawLat.toFixed(6)}, ${rawLng.toFixed(6)}`,
-                used: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
-                accuracy: accuracy.toFixed(0) + 'm',
-                moving: moving ? 'YES' : 'NO'
-            });
-        },
-        function(error) {
-            console.error('❌ Geolocation error:', error);
-            status.style.backgroundColor = '#fee2e2';
-            status.style.color = '#991b1b';
-            
-            let errorMsg = '❌ GPS Error: ';
-            switch(error.code) {
-                case error.PERMISSION_DENIED:
-                    errorMsg += 'Permission denied. Please enable location access.';
-                    break;
-                case error.POSITION_UNAVAILABLE:
-                    errorMsg += 'Location unavailable. Check GPS is enabled.';
-                    break;
-                case error.TIMEOUT:
-                    errorMsg += 'Request timeout. Retrying...';
-                    break;
-                default:
-                    errorMsg += error.message;
-            }
-            status.innerHTML = errorMsg;
-        },
-        geoOptions
-    );
-    
-    // ⭐ ADAPTIVE SENDING: Fast when moving, slow when stationary
-    gpsUpdateInterval = setInterval(() => {
-          // ⭐ Don't send until GPS is stabilized
-        if (!gpsStabilized) {
-            return;
-        }
-        if (lastKnownPosition && socket.readyState === WebSocket.OPEN) {
-            const { lat, lng, moving } = lastKnownPosition;
-            
-            // Determine if we should send this update
-            let shouldSend = true;
-            
-            if (lastSentLocation) {
-                const distance = calculateDistance(
-                    lastSentLocation.lat, lastSentLocation.lng,
-                    lat, lng
-                );
-                
-                const timeSinceLastSend = (Date.now() - (lastSentLocation.timestamp || 0)) / 1000;
-                
-                if (moving) {
-                    // ⭐ MOVING: Send if moved >8m OR every 3 seconds
-                    if (distance < 8 && timeSinceLastSend < 3) {
-                        shouldSend = false;
-                    }
-                } else {
-                    // ⭐ STATIONARY: Send only if moved >10m OR every 10 seconds
-                    if (distance < 10 && timeSinceLastSend < 10) {
-                        shouldSend = false;
-                    }
-                }
-            }
-            
-            if (shouldSend) {
-                const data = {
-                    type: 'location',
-                    lat: lat,
-                    lng: lng
-                };
-                
-                socket.send(JSON.stringify(data));
-                lastSentLocation = { lat, lng, timestamp: Date.now() };
-                
-                if (moving) {
-                    console.log('📤 Sent (MOVING)');
-                } else {
-                    console.log('📤 Sent (STATIONARY)');
-                }
-            }
-        }
-    }, 2000); // Check every 2 seconds
-    
-    console.log('✅ GPS: Smart tracking enabled (raw when moving, filtered when stationary)');
-};
     
     socket.onerror = function(error) {
         console.error('❌ WebSocket error:', error);
@@ -1002,12 +797,6 @@ stopBtn.addEventListener('click', function() {
         geoWatchId = null;
         console.log('✅ Geolocation watch stopped');
     }
-        // ⭐ ADD THIS LINE - Stop the 1-second interval
-    if (gpsUpdateInterval) {
-        clearInterval(gpsUpdateInterval);
-        gpsUpdateInterval = null;
-        console.log('✅ GPS update interval stopped');
-    }
     
     status.style.backgroundColor = '#f3f4f6';
     status.style.color = '#374151';
@@ -1016,7 +805,15 @@ stopBtn.addEventListener('click', function() {
     stopBtn.disabled = true;
     
     lastSentLocation = null;
-    lastKnownPosition = null; // ⭐ ADD THIS LINE
+});
+
+// Prevent accidental page close while tracking
+window.addEventListener('beforeunload', function(e) {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+        e.preventDefault();
+        e.returnValue = 'Location tracking is active. Are you sure?';
+        return e.returnValue;
+    }
 });
 
 // Prevent accidental page close while tracking

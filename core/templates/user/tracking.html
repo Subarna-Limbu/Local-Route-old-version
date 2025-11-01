@@ -729,68 +729,18 @@ function createBusDivIcon(rotation = 0) {
 
    
 
-// ⭐ IMPROVED: Much smoother animation with proper thresholds
-let currentAnimation = null;
-let lastAnimationTime = 0;
-
-function animateMarkerTo(marker, newLatLng, baseDurationMs = 1000) {
-    // ⭐ Prevent too-frequent animations
-    const now = Date.now();
-    if (now - lastAnimationTime < 500) {
-        console.log('⏭️ Skipping animation (too soon)');
-        return;
-    }
-    lastAnimationTime = now;
-    
-    // Cancel previous animation if still running
-    if (currentAnimation) {
-        cancelAnimationFrame(currentAnimation);
-        currentAnimation = null;
-    }
-    
+// ⭐ SMOOTH ANIMATION - Based on old version
+function animateMarkerTo(marker, newLatLng, durationMs = 1500) {
     const start = performance.now();
     const from = marker.getLatLng();
     const to = L.latLng(newLatLng[0], newLatLng[1]);
-    
-    // Calculate distance
-    const R = 6371000;
-    const φ1 = from.lat * Math.PI / 180;
-    const φ2 = to.lat * Math.PI / 180;
-    const Δφ = (to.lat - from.lat) * Math.PI / 180;
-    const Δλ = (to.lng - from.lng) * Math.PI / 180;
-    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-              Math.cos(φ1) * Math.cos(φ2) *
-              Math.sin(Δλ/2) * Math.sin(Δλ/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    const distance = R * c;
-    
-    // ⭐ INCREASED THRESHOLD: Only animate movements > 10m (was 0.5m)
-    if (distance < 25) {
-        marker.setLatLng([to.lat, to.lng]);
-        marker.setIcon(createBusDivIcon());
-        console.log(`⚡ Instant update (${distance.toFixed(1)}m - below 25m threshold)`);
-    }
-    
-    // ⭐ Calculate bearing only for significant movements
-    let bearing = 0;
-    if (distance > 15) { // Only update rotation for moves > 15m
-        bearing = bearingBetween(from.lat, from.lng, to.lat, to.lng);
-        bearing = smoothBearing(bearing, lastBearing);
-        lastBearing = bearing;
-        bearingInitialized = true;
-    }
-    
-    // ⭐ Adaptive duration: longer for larger distances
-    const durationMs = Math.min(2000, Math.max(800, distance * 40)); // 800-2000ms
-    
-    console.log(`🚗 Animating ${distance.toFixed(1)}m over ${durationMs}ms`);
     
     function step(now) {
         const elapsed = now - start;
         const t = Math.min(1, elapsed / durationMs);
         
-        // ⭐ Ease-out for very smooth deceleration
-        const eased = 1 - Math.pow(1 - t, 3); // Cubic ease-out
+        // Smooth easing
+        const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
         
         const lat = from.lat + (to.lat - from.lat) * eased;
         const lng = from.lng + (to.lng - from.lng) * eased;
@@ -799,13 +749,11 @@ function animateMarkerTo(marker, newLatLng, baseDurationMs = 1000) {
         marker.setIcon(createBusDivIcon());
         
         if (t < 1) {
-            currentAnimation = requestAnimationFrame(step);
-        } else {
-            currentAnimation = null;
+            requestAnimationFrame(step);
         }
     }
     
-    currentAnimation = requestAnimationFrame(step);
+    requestAnimationFrame(step);
 }
 // Calculate bearing between two points
 function bearingBetween(lat1, lng1, lat2, lng2) {
@@ -1185,32 +1133,12 @@ socket.onmessage = function(event) {
     const data = JSON.parse(event.data);
     console.log('📨 WebSocket message:', data);
     
-    // Handle tracking status updates
     if (data.type === 'tracking_status') {
-        console.log('📊 Tracking status:', data.status);
-        
         if (data.status === 'connected') {
-            window.trackingActive = true;
             updateStatus('✅ Driver started tracking! Receiving live updates...', 'success');
             lastUpdateTime = Date.now();
-            
-            if (connectionCheckInterval) {
-                clearInterval(connectionCheckInterval);
-            }
-            connectionCheckInterval = setInterval(() => {
-                const timeSinceLastUpdate = (Date.now() - lastUpdateTime) / 1000;
-                
-                if (window.trackingActive && timeSinceLastUpdate > 45 && marker) {
-                    updateStatus('⚠️ Connection may be weak - No updates for 45 seconds', 'warning');
-                } else if (window.trackingActive && timeSinceLastUpdate > 90) {
-                    updateStatus('❌ Connection lost - Driver may have stopped tracking', 'error');
-                }
-            }, 5000);
-    
         } else if (data.status === 'disconnected') {
-            window.trackingActive = false;
             updateStatus('⏹️ Driver stopped tracking. Last known location shown on map.', 'warning');
-            
             if (connectionCheckInterval) {
                 clearInterval(connectionCheckInterval);
                 connectionCheckInterval = null;
@@ -1218,58 +1146,31 @@ socket.onmessage = function(event) {
         }
         return;
     }
-
-    // Handle location updates
-    if (data.type === 'location_update' && data.lat && data.lng) {
-        window.updateCounter = window.updateCounter || 0;
-        window.updateCounter++;
-        if (!data.is_historical) {
-          window.trackingActive = true;
-        }
     
+    // ⭐ FIXED: Handle location updates without complex sequence logic
+    if (data.type === 'location_update' && data.lat && data.lng) {
+        lastUpdateTime = Date.now();
+        
         const isHistorical = data.is_historical || false;
-        const sequence = data.sequence !== undefined ? data.sequence : 0;
+        const sequence = data.sequence || 0;
         
-        if (isHistorical && marker) {
-            console.log('📜 Skipping historical data (marker already exists)');
+        // Simple sequence validation
+        if (!isHistorical && sequence > 0 && lastSequence > 0 && sequence < lastSequence) {
+            console.warn(`⏭️ Ignoring out-of-order update: seq=${sequence}, last=${lastSequence}`);
             return;
         }
         
-        // Smart sequence validation
-        if (!isHistorical && lastSequence > 0 && sequence > 0 && sequence < lastSequence) {
-            const sequenceDrop = lastSequence - sequence;
-            
-            if (sequenceDrop > 3) {
-                console.log(`🔄 Detected tracking restart: seq dropped from ${lastSequence} to ${sequence}`);
-                lastSequence = -1;
-            } else {
-                console.warn(`⏭️ REJECTED out-of-order update: seq=${sequence}, last=${lastSequence}`);
-                return;
-            }
-        }
-        
-        // Improved validation: Only reject if significantly behind
-        if (!isHistorical && sequence > 0 && lastSequence > 0 && sequence < (lastSequence - 2)) {
-            console.warn(`⏭️ REJECTED very stale update: seq=${sequence}, last=${lastSequence}`);
-            return;
-        }
-        
-        // Update sequence tracker
         if (!isHistorical && sequence > 0) {
             lastSequence = sequence;
-            console.log(`✅ Accepted update: seq=${sequence}`);
-        } else if (isHistorical) {
-            console.log(`📜 Historical data (seq=${sequence})`);
         }
         
         // Validate coordinates
         if (Math.abs(data.lat) > 90 || Math.abs(data.lng) > 180) {
-            console.error('❌ Invalid coordinates received:', data);
+            console.error('❌ Invalid coordinates:', data);
             return;
         }
         
-        console.log(`📍 Update #${window.updateCounter}: lat=${data.lat.toFixed(6)}, lng=${data.lng.toFixed(6)}, seq=${sequence}`);
-        lastUpdateTime = Date.now();
+        console.log(`📍 Location: lat=${data.lat.toFixed(6)}, lng=${data.lng.toFixed(6)}, seq=${sequence}`);
         
         if (!marker) {
             // First location - create marker
@@ -1281,45 +1182,18 @@ socket.onmessage = function(event) {
             } else {
                 updateStatus('✅ Bus location found! Tracking live...', 'success');
             }
-            return;
         } else {
             // Skip animation for historical data
             if (isHistorical) {
-                console.log('📜 Skipping animation for historical data');
                 return;
             }
             
-            // Calculate distance moved
-            const oldPos = marker.getLatLng();
-            const newPos = [data.lat, data.lng];
-            
-            const R = 6371000;
-            const φ1 = oldPos.lat * Math.PI / 180;
-            const φ2 = newPos[0] * Math.PI / 180;
-            const Δφ = (newPos[0] - oldPos.lat) * Math.PI / 180;
-            const Δλ = (newPos[1] - oldPos.lng) * Math.PI / 180;
-            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                      Math.cos(φ1) * Math.cos(φ2) *
-                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-            const distanceMoved = R * c;
-            
-            console.log(`🚗 Bus moved: ${distanceMoved.toFixed(1)}m (seq=${sequence})`);
-
-            // Animate only if moved more than 15 meters
-            if (distanceMoved > 15) {
-                animateMarkerTo(marker, newPos);
-            } else {
-                // Small movement - instant update without animation
-                marker.setLatLng(newPos);
-                marker.setIcon(createBusDivIcon());
-                console.log('⏭️ Small movement, instant update');
-            }
-            
+            // ⭐ SMOOTH ANIMATION - Always animate
+            animateMarkerTo(marker, [data.lat, data.lng]);
             updateStatus('✅ Live tracking active - Updated just now', 'success');
         }
     }
-
+    
     // Handle seat updates
     if (data.type === 'seat_update') {
         const seatBtn = document.querySelector(`[data-seat-id="${data.seat_id}"]`);
@@ -1336,6 +1210,7 @@ socket.onmessage = function(event) {
         }
     }
 };
+
 
     socket.onerror = function(error) {
         console.error('❌ WebSocket error:', error);
