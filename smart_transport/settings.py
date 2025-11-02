@@ -29,15 +29,15 @@ CSRF_TRUSTED_ORIGINS = [
     "https://unflowering-nella-thermometrically.ngrok-free.dev",
 ]
 INSTALLED_APPS = [
-    'daphne',
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    'channels',
-    'core',  # Your app
+    "daphne",
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "channels",
+    "core",  # Your app
 ]
 
 MIDDLEWARE = [

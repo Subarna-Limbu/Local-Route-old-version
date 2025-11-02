@@ -265,23 +265,25 @@ class LocationConsumer(AsyncWebsocketConsumer):
 
             bus.current_lat = lat_f
             bus.current_lng = lng_f
-            bus.save(update_fields=["current_lat", "current_lng"])
+            from django.utils import timezone
+            bus.updated_at = timezone.now()  # Mark when location was last updated
+            bus.save(update_fields=["current_lat", "current_lng", "updated_at"])  # Include updated_at
+
             logger.info(f"Bus {bus.number_plate} location updated: {lat_f}, {lng_f}")
 
             if bus.driver:
                 bus.driver.current_lat = lat_f
                 bus.driver.current_lng = lng_f
                 bus.driver.save(update_fields=["current_lat", "current_lng"])
-                logger.info(f"Driver {bus.driver.user.username} location updated")
+                logger.info(f"Driver {bus.driver.user.username} location updated: {lat_f}, {lng_f}")
+                try:
+                    route=getattr(bus, 'route', None)
+                    if route:
+                        stops = route.get_stops_list()
+                        if stops:
+                         import math
 
-            try:
-                route = getattr(bus, "route", None)
-                if route:
-                    stops = route.get_stops_list()
-                    if stops:
-                        import math
-
-                        def haversine(lat1, lon1, lat2, lon2):
+                         def haversine(lat1, lon1, lat2, lon2):
                             R = 6371
                             phi1 = math.radians(lat1)
                             phi2 = math.radians(lat2)
@@ -333,8 +335,8 @@ class LocationConsumer(AsyncWebsocketConsumer):
                         logger.info(
                             f"Bus nearest stop: index={nearest_idx}, ETA={bus.eta_seconds}s"
                         )
-            except Exception as e:
-                logger.exception(f"Error calculating nearest stop: {e}")
+                except Exception as e:
+                 logger.exception(f"Error calculating nearest stop: {e}")
 
             return True
 

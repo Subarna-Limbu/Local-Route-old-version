@@ -1,4 +1,3 @@
-
 from django.db import models
 from django.contrib.auth.models import User
 import os
@@ -24,7 +23,6 @@ class Driver(models.Model):
 
     def __str__(self):
         return self.user.username
-
 
 
 # New model for vehicle documents
@@ -56,6 +54,8 @@ class Bus(models.Model):
     # Persisted nearest stop index along route (fast checks)
     nearest_stop_index = models.IntegerField(null=True, blank=True)
 
+    updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
+
     def __str__(self):
         return f"{self.number_plate} ({self.total_seats} seats)"
 
@@ -73,8 +73,6 @@ class Seat(models.Model):
 
     def __str__(self):
         return f"Bus {self.bus.number_plate} - Seat {self.seat_number}"
-
-
 
 
 # Through model to maintain order of stops in a route
@@ -161,7 +159,6 @@ class BusRoute(models.Model):
         a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
         return R * c
-
 
 
 class Bookmark(models.Model):
