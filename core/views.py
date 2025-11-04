@@ -737,21 +737,35 @@ def toggle_seat(request):
             seat = Seat.objects.get(id=seat_id)
             seat.is_available = not seat.is_available
             seat.save()
+             
             # Notify connected clients (users tracking this bus) about the seat change
             try:
                 channel_layer = get_channel_layer()
-                payload = {
-                    'type': 'seat_update',
-                    'seat_id': seat.id,
-                    'is_available': seat.is_available,
-                    'seat_number': seat.seat_number,
-                    'bus_id': seat.bus.id,
-                }
-                async_to_sync(channel_layer.group_send)(f'bus_{seat.bus.id}', payload)
+                async_to_sync(channel_layer.group_send)(
+                    f"bus_{bus_id}",
+                    {
+                        "type": "seat_update",
+                        "seat_id": seat.id,
+                        "is_available": True,
+                        "seat_number": seat.seat_number,
+                        "bus_id": seat.bus.id,
+                    },
+                )
+                if pickup.bus.driver and pickup.bus.driver.user:
+                    async_to_sync(channel_layer.group_send)(
+                        f"driver_{pickup.bus.driver.user.id}",
+                        {
+                            "type": "reservation_cancelled",
+                            "pickup_id": pickup_id,
+                            "user_id": request.user.id,
+                            "seat_number": seat.seat_number,
+                            "message": f"Seat {seat_number} cancelled",
+                        },
+                    )
             except Exception:
                 # non-fatal if channels not configured
                 logger.exception('Failed to broadcast seat_update for seat %s', seat.id)
-            return JsonResponse({'status': 'success', 'is_available': seat.is_available})
+            # return JsonResponse({'status': 'success', 'is_available': seat.is_available})
         except Exception as e:
             return JsonResponse({'status': 'error', 'error': str(e)})
     return JsonResponse({'status': 'error', 'error': 'Invalid request'})
@@ -1384,6 +1398,25 @@ def reserve_seat_for_pickup(request):
         pickup.reserved_seat = available_seat
         pickup.status = PickupRequest.STATUS_ACK  # Mark as acknowledged
         pickup.save(update_fields=["reserved_seat", "status"])
+        # ⭐ Get variables for notifications
+        seat_number = available_seat.seat_number
+        seat_id = available_seat.id
+        bus_id = pickup.bus.id
+        user_id = pickup.user.id
+        stop_name = pickup.stop
+        try:
+            async_to_sync(channel_layer.group_send)(
+                f"user_{pickup.user.id}",
+                {
+                    "type": "seat_reserved",
+                    "pickup_id": pickup.id,
+                    "seat_number": available_seat.seat_number,
+                    "bus_id": pickup.bus.id,
+                    "message": f"Seat {available_seat.seat_number} reserved for you at {pickup.stop}",
+                },
+            )
+        except Exception as e:
+            logger.exception(f"Failed to send confirmation to user: {e}")
 
         # Broadcast seat update to all tracking this bus
         try:
@@ -1466,7 +1499,26 @@ def cancel_pickup_request(request):
                 },
                 status=400,
             )
-
+            
+        bus_id = pickup.bus.id if pickup.bus else None
+        driver_user_id = pickup.bus.driver.user.id if (pickup.bus and pickup.bus.driver and pickup.bus.driver.user) else None
+        user_username = request.user.username
+        
+        # Notify driver via WebSocket
+        try:
+            channel_layer = get_channel_layer()
+            if pickup.bus and pickup.bus.driver and pickup.bus.driver.user:
+                async_to_sync(channel_layer.group_send)(
+                    f"driver_{pickup.bus.driver.user.id}",
+                    {
+                        "type": "pickup_request_canceled",
+                        "pickup_id": pickup.id,
+                        "user_id": request.user.id,
+                        "message": f"{request.user.username} cancelled pickup request",
+                    },
+                )
+        except Exception as e:
+            logger.exception(f"Failed to notify driver of cancellation: {e}")
         # Delete the pickup request
         pickup.delete()
 
@@ -1511,13 +1563,48 @@ def cancel_seat_reservation(request):
 
         seat = pickup.reserved_seat
         seat_number = seat.seat_number
+        seat_id = seat.id
+        bus_id = pickup.bus.id
+        driver_user_id = pickup.bus.driver.user.id if (pickup.bus.driver and pickup.bus.driver.user) else None
+        user_username = request.user.username
 
         # Free the seat
         seat.is_available = True
         seat.save(update_fields=["is_available"])
-
         # Delete the pickup request
         pickup.delete()
+        try:
+            channel_layer = get_channel_layer()
+
+            # Notify all bus trackers (passengers)
+            async_to_sync(channel_layer.group_send)(
+                f"bus_{bus_id}",
+                {
+                    "type": "seat_update",
+                    "seat_id": seat.id,
+                    "is_available": True,
+                    "seat_number": seat.seat_number,
+                    "bus_id": bus_id,
+                },
+            )
+
+            # Notify driver
+            if pickup.bus.driver and pickup.bus.driver.user:
+                async_to_sync(channel_layer.group_send)(
+                    f"driver_{pickup.bus.driver.user.id}",
+                    {
+                        "type": "reservation_cancelled",
+                        "pickup_id": pickup_id,
+                        "seat_number": seat_number,
+                        "user_id": request.user.id,
+                        "message": f"Seat {seat_number} reservation cancelled by {request.user.username}"
+                    },
+                )
+
+            logger.info(f"Broadcasted seat {seat_number} availability update")
+
+        except Exception as e:
+            logger.exception(f"Failed to broadcast seat update: {e}")
 
         # Broadcast seat update
         try:
@@ -1716,6 +1803,7 @@ def driver_notifications(request):
             "status": p.status,
             "created_at": p.created_at.isoformat(),
             "seen": p.seen_by_driver,
+            "seat_reserved": bool(p.reserved_seat),
             "reserved_seat_number": (
                 p.reserved_seat.seat_number if p.reserved_seat else None
             ),

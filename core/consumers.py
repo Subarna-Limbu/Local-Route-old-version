@@ -738,3 +738,44 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 return True
         except Exception:
             return False
+
+    async def pickup_request_canceled(self, event):
+        """Handle pickup request cancellation"""
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "pickup_request_canceled",
+                    "pickup_id": event.get("pickup_id"),
+                    "user_id": event.get("user_id"),
+                    "message": event.get("message", "Pickup request canceled"),
+                }
+            )
+        )
+
+    async def reservation_canceled(self, event):
+        """Handle reservation cancellation"""
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "reservation_canceled",
+                    "pickup_id": event.get("pickup_id"),
+                    "seat_number": event.get("seat_number"),
+                    "user_id": event.get("user_id"),
+                    "message": event.get("message", "Reservation canceled"),
+                }
+            )
+        )
+
+    async def seat_reservation_confirmed(self, event):
+        """Handle seat reservation confirmation"""
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "seat_reservation_confirmed",
+                    "pickup_id": event.get("pickup_id"),
+                    "seat_number": event.get("seat_number"),
+                    "bus_id": event.get("bus_id"),
+                    "message": event.get("message", "Seat reserved"),
+                }
+            )
+        )

@@ -681,7 +681,7 @@
                 <option value="">Select your pickup stop</option>
                 {% if bus.route %}
                     {% for stop in bus.route.get_stops_list %}
-                        <option value="{{ stop.name }}" {% if default_pickup == stop.name %}selected{% endif %}>
+                        <option value="{{ stop.id }}" {% if default_pickup == stop.name %}selected{% endif %}> 
                             {{ stop.name }}
                         </option>
                     {% endfor %}
@@ -1494,57 +1494,72 @@ let currentPickupStatus = 'none'; // 'none', 'pending', 'reserved'
 // Send Pickup Request - UPDATED VERSION
 const sendPickupBtn = document.getElementById('sendPickup');
 if (sendPickupBtn) {
-    sendPickupBtn.addEventListener('click', function() {
-        // ⭐ Get stop from dropdown OR custom input
-        const stopSelect = document.getElementById('pickupStopSelect').value.trim();
-        const stopCustom = document.getElementById('pickupCustom').value.trim();
-        const stop = stopSelect || stopCustom;  // Prefer dropdown
-        
-        const message = document.getElementById('pickupMsg').value.trim();
-        
-        if (!stop) {
-            showToast('Please select a pickup stop or enter a custom location', 'error');
-            return;
+sendPickupBtn.addEventListener('click', function() {
+    // Get stop from dropdown OR custom input
+    const stopSelect = document.getElementById('pickupStopSelect');
+    const stopCustom = document.getElementById('pickupCustom');
+    
+    // ⭐ FIX: Get both stop name AND stop ID
+    let stopId = null;
+    let stopName = '';
+    
+    if (stopSelect && stopSelect.value) {
+        stopId = stopSelect.value;  // This is the stop ID from dropdown
+        stopName = stopSelect.options[stopSelect.selectedIndex].text;
+    } else if (stopCustom && stopCustom.value.trim()) {
+        stopName = stopCustom.value.trim();
+        // stopId will remain null for custom locations
+    }
+    
+    if (!stopName) {
+        showToast('Please select a pickup stop or enter a custom location', 'error');
+        return;
+    }
+
+    const message = document.getElementById('pickupMsg').value.trim();
+    const originalText = sendPickupBtn.innerHTML;
+    sendPickupBtn.disabled = true;
+    sendPickupBtn.innerHTML = '⏳ Sending...';
+
+    // ⭐ FIX: Send stop_id in the request
+    const formData = new URLSearchParams();
+    formData.append('bus_id', busId);
+    formData.append('stop', stopName);
+    formData.append('message', message);
+    if (stopId) {
+        formData.append('stop_id', stopId);  // ⭐ ADD THIS
+    }
+
+    fetch('/api/send_pickup/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: formData.toString()
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            currentPickupId = data.pickup_id;
+            currentPickupStatus = 'pending';
+            updatePickupUI();
+            showToast('Pickup request sent successfully!', 'success');
+            document.getElementById('pickupMsg').value = '';
+        } else {
+            showToast('Error: ' + (data.error || 'Failed to send request'), 'error');
         }
-
-        const originalText = sendPickupBtn.innerHTML;
-        sendPickupBtn.disabled = true;
-        sendPickupBtn.innerHTML = '⏳ Sending...';
-
-        fetch('/api/send_pickup/', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'X-CSRFToken': '{{ csrf_token }}'
-            },
-            body: 'bus_id=' + encodeURIComponent(busId) + 
-                  '&stop=' + encodeURIComponent(stop) + 
-                  '&message=' + encodeURIComponent(message)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'success') {
-                currentPickupId = data.pickup_id;
-                currentPickupStatus = 'pending';
-                updatePickupUI();
-                
-                showToast('Pickup request sent successfully!', 'success');
-                document.getElementById('pickupMsg').value = '';
-            } else {
-                showToast('Error: ' + (data.error || 'Failed to send request'), 'error');
-            }
-        })
-        .catch(error => {
-            console.error('Pickup request error:', error);
-            showToast('Network error', 'error');
-        })
-        .finally(() => {
-            sendPickupBtn.disabled = false;
-            sendPickupBtn.innerHTML = originalText;
-        });
+    })
+    .catch(error => {
+        console.error('Pickup request error:', error);
+        showToast('Network error', 'error');
+    })
+    .finally(() => {
+        sendPickupBtn.disabled = false;
+        sendPickupBtn.innerHTML = originalText;
     });
+});
 }
-
 // Cancel Pickup Request (before reservation)
 const cancelPickupBtn = document.getElementById('cancelPickupRequest');
 if (cancelPickupBtn) {
@@ -1678,13 +1693,21 @@ function updatePickupUI() {
 
 // Listen for seat reservation confirmation via chat
 if (chatSocket) {
-    const originalOnMessage = chatSocket.onmessage;
-    chatSocket.onmessage = function(event) {
-        // Call original handler
-        if (originalOnMessage) {
-            originalOnMessage.call(chatSocket, event);
-        }
-        
+  chatSocket.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+    
+    if (data.type === 'chat_message') {
+        addChatMessage(data.sender_name || 'Driver', data.content, data.sender_id === {{ request.user.id }});
+    }
+    // ⭐ ADD THIS:
+    else if (data.type === 'seat_reservation_confirmed') {
+        console.log('Seat reserved for me:', data);
+        currentPickupId = data.pickup_id;
+        currentPickupStatus = 'reserved';
+        updatePickupUI();
+        showNotification(`✅ Seat ${data.seat_number} reserved!`, 'success');
+    }
+};
         // Check if this is a reservation confirmation
         try {
             const data = JSON.parse(event.data);

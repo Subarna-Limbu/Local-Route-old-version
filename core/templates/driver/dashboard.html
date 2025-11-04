@@ -1209,14 +1209,47 @@ document.querySelectorAll('.seat-btn').forEach(function(btn) {
             return;
         }
 
-        if (data.type === 'pickup_notification') {
-            addNotification(data);
-            // Update badge count
-            const current = parseInt(notifBadge.innerText || '0') || 0;
-            setBadge(current + 1);
-        } else if (data.type === 'chat_message') {
-            addChatMessage(data);
-        }
+      if (data.type === 'pickup_notification') {
+    addNotification(data);
+    const current = parseInt(notifBadge.innerText || '0') || 0;
+    setBadge(current + 1);
+} 
+else if (data.type === 'chat_message') {
+    addChatMessage(data);
+} 
+// ⭐ ADD THESE NEW CASES:
+else if (data.type === 'pickup_request_canceled') {
+    console.log('Pickup request canceled:', data.pickup_id);
+    
+    // Remove from local array
+    const index = pickupRequests.findIndex(p => p.id === data.pickup_id);
+    if (index !== -1) {
+        pickupRequests.splice(index, 1);
+        console.log('Removed pickup from array');
+    }
+    
+    // Refresh display
+    displayUpcomingStops();
+    
+    // Show notification
+    showNotification('📍 Pickup request canceled', 'success');
+}
+else if (data.type === 'reservation_canceled') {
+    console.log('Reservation canceled:', data);
+    
+    // Remove from local array
+    const index = pickupRequests.findIndex(p => p.id === data.pickup_id);
+    if (index !== -1) {
+        pickupRequests.splice(index, 1);
+        console.log('Removed reservation from array');
+    }
+    
+    // Refresh display and reload
+    displayUpcomingStops();
+    
+    // Show notification
+    showNotification('💺 Seat reservation canceled', 'success');
+}
     };
 
 function addNotification(notification) {
@@ -1660,33 +1693,28 @@ function getTimeAgo(timestamp) {
         body: 'pickup_id=' + encodeURIComponent(pickupId)
     })
     .then(response => response.json())
-    .then(data => {
+.then(data => {
         if (data.status === 'success') {
-            // ✅ Update button to show success
+            // Update button PERMANENTLY
             btn.innerHTML = '✅ Seat ' + data.seat_number;
             btn.classList.add('reserved');
             btn.style.background = '#9ca3af';
             btn.style.cursor = 'not-allowed';
             
-            // Mark this pickup as reserved in memory
+            // Mark in local array
             const pickupRequest = pickupRequests.find(p => p.id === pickupId);
             if (pickupRequest) {
                 pickupRequest.seat_reserved = true;
+                pickupRequest.reserved_seat_number = data.seat_number;
             }
             
-            // Show success notification
-            showNotification(`✅ Seat ${data.seat_number} reserved successfully!`, 'success');
-            
-            // Refresh the upcoming stops display
-            setTimeout(() => {
-                loadUpcomingStops();
-            }, 500);
-            
-            console.log(`✅ Reserved seat ${data.seat_number} for pickup ${pickupId}`);
+            // Just re-render, don't reload from server
+            displayUpcomingStops();
+            showNotification(`✅ Seat ${data.seat_number} reserved!`, 'success');
         } else {
             btn.innerHTML = originalText;
             btn.disabled = false;
-            alert('❌ ' + (data.error || 'Failed to reserve seat'));
+            alert('❌ ' + (data.error || 'Failed'));
         }
     })
     .catch(error => {
@@ -1727,18 +1755,24 @@ function loadPickupRequests() {
         .then(r => r.json())
         .then(data => {
             if (data && data.status === 'success') {
-                // Filter: must have stop_id, stop_index, and be within 1 hour
+                // ⭐ FIX: Filter requests - must have stop_id AND stop_index
                 pickupRequests = (data.pickups || []).filter(p => {
-                    return p.stop_id && 
-                           (p.stop_index !== null) && 
-                           isWithinTimeFrame(p.created_at);
+                    const isValid = p.stop_id && (p.stop_index !== null) && isWithinTimeFrame(p.created_at);
+                    if (!isValid) {
+                        console.log('Filtering out invalid pickup:', p.id, 'stop_id:', p.stop_id, 'stop_index:', p.stop_index);
+                    }
+                    return isValid;
                 });
                 
                 console.log('📋 Loaded pickup requests (last 1h):', pickupRequests.length);
                 displayUpcomingStops();
+            } else {
+                console.error('Failed to load pickups:', data);
             }
         })
-        .catch(console.error);
+        .catch(error => {
+            console.error('Error loading pickups:', error);
+        });
 }
 
 // Listen for new pickup notifications via WebSocket
@@ -1774,6 +1808,24 @@ if (typeof driverSocket !== 'undefined' && driverSocket) {
             originalOnMessage.call(this, e);
         }
     };
+else if (data.type === 'pickup_request_canceled') {  // ⭐ CHANGED NAME
+    console.log('Pickup cancelled:', data.pickup_id);
+    const index = pickupRequests.findIndex(p => p.id === data.pickup_id);
+    if (index !== -1) {
+        pickupRequests.splice(index, 1);
+    }
+    displayUpcomingStops();
+    showNotification(`📍 ${data.message || 'Pickup request cancelled'}`, 'success');
+}
+else if (data.type === 'reservation_canceled') {  // ⭐ CHANGED NAME
+    console.log('Reservation cancelled:', data);
+    const index = pickupRequests.findIndex(p => p.id === data.pickup_id);
+    if (index !== -1) {
+        pickupRequests.splice(index, 1);
+    }
+    displayUpcomingStops();
+    loadUpcomingStops();
+    showNotification(`💺 ${data.message || 'Seat reservation cancelled'}`, 'success');
 }
 
 // Initialize on page load
