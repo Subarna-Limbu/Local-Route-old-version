@@ -9,8 +9,6 @@ class RouteStopInline(admin.TabularInline):
 	autocomplete_fields = ['stop']
 	ordering = ('order',)
 
-
-
 # Inline for Seat
 class SeatInline(admin.TabularInline):
 	model = Seat

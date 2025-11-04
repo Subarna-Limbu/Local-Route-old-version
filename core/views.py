@@ -1241,43 +1241,139 @@ def remove_bookmark(request):
         return JsonResponse({'status': 'error', 'error': str(e)})
 
 
+from datetime import timedelta
+from django.utils import timezone
+
+
 @login_required
 @require_POST
 def send_pickup_request(request):
     try:
-        bus_id = int(request.POST.get('bus_id'))
-        stop = request.POST.get('stop')
-        message = request.POST.get('message', '')
+        bus_id = int(request.POST.get("bus_id"))
+        stop = request.POST.get("stop")
+        stop_id = request.POST.get("stop_id")
+        message = request.POST.get("message", "")
+
         bus = Bus.objects.get(id=bus_id)
-        pickup = PickupRequest.objects.create(user=request.user, bus=bus, stop=stop, message=message)
-        # Log the notification payload for auditing
-        try:
-            logger.info('PickupRequest created: id=%s user_id=%s bus_id=%s stop=%s', pickup.id, request.user.id, bus.id, extra={'stop': stop})
-        except Exception:
-            logger.exception('Failed to log pickup creation')
-        # Notify driver via channels group
+
+        # ⭐ NEW: Check for recent duplicate requests (within 1 hour)
+        one_hour_ago = timezone.now() - timedelta(hours=1)
+
+        existing_request = PickupRequest.objects.filter(
+            user=request.user,
+            bus=bus,
+            created_at__gte=one_hour_ago,
+            status=PickupRequest.STATUS_PENDING,
+        ).first()
+
+        if existing_request:
+            # User already has an active request for this bus
+            time_diff = (
+                timezone.now() - existing_request.created_at
+            ).total_seconds() / 60
+            return JsonResponse(
+                {
+                    "status": "error",
+                    "error": f"You already have an active pickup request for this bus from {int(time_diff)} minutes ago. Please wait or cancel the previous request.",
+                    "existing_request_id": existing_request.id,
+                    "existing_stop": existing_request.stop,
+                }
+            )
+
+        # Resolve stop_obj
+        stop_obj = None
+        if stop_id:
+            try:
+                stop_obj = Stop.objects.get(id=int(stop_id))
+                stop = stop_obj.name
+            except Stop.DoesNotExist:
+                pass
+
+        # Create new pickup request
+        pickup = PickupRequest.objects.create(
+            user=request.user, bus=bus, stop=stop, stop_obj=stop_obj, message=message
+        )
+
+        logger.info(
+            "PickupRequest created: id=%s user=%s bus=%s stop=%s stop_id=%s",
+            pickup.id,
+            request.user.username,
+            bus.id,
+            stop,
+            stop_obj.id if stop_obj else None,
+        )
+
+        # Send WebSocket notification to driver
         try:
             channel_layer = get_channel_layer()
             if bus.driver and bus.driver.user:
-                driver_group = f'driver_{bus.driver.user.id}'
-                payload = {
-                    'type': 'pickup_notification',
-                    'pickup_id': pickup.id,
-                    'user_id': request.user.id,
-                    'user_username': getattr(request.user, 'username', None),
-                    'bus_id': bus.id,
-                    'stop': pickup.stop,
-                    'message': pickup.message,
-                }
-                logger.info('Sending pickup_notification to %s payload=%s', driver_group, payload)
-                async_to_sync(channel_layer.group_send)(driver_group, payload)
-        except Exception:
-            pass
-        return JsonResponse({'status': 'success', 'pickup_id': pickup.id})
+                async_to_sync(channel_layer.group_send)(
+                    f"driver_{bus.driver.user.id}",
+                    {
+                        "type": "pickup_notification",
+                        "pickup_id": pickup.id,
+                        "user_id": request.user.id,
+                        "user_username": request.user.username,
+                        "bus_id": bus.id,
+                        "stop": pickup.stop,
+                        "stop_id": stop_obj.id if stop_obj else None,
+                        "stop_index": pickup.get_stop_index(),
+                        "message": pickup.message,
+                    },
+                )
+        except Exception as e:
+            logger.exception("Notification failed: %s", e)
+
+        return JsonResponse(
+            {
+                "status": "success",
+                "pickup_id": pickup.id,
+                "stop_index": pickup.get_stop_index(),
+                "message": "Pickup request sent successfully!",
+            }
+        )
+
     except Exception as e:
+        logger.exception("send_pickup_request failed")
+        return JsonResponse({"status": "error", "error": str(e)})
+
+# ⭐ NEW: Add endpoint to cancel pickup request
+@login_required
+@require_POST
+def cancel_pickup_request(request):
+    """Allow users to cancel their own pickup requests"""
+    try:
+        pickup_id = int(request.POST.get('pickup_id'))
+        
+        pickup = PickupRequest.objects.filter(
+            id=pickup_id,
+            user=request.user  # Only owner can cancel
+        ).first()
+        
+        if not pickup:
+            return JsonResponse({
+                'status': 'error',
+                'error': 'Pickup request not found or you do not have permission'
+            })
+        
+        # Mark as rejected instead of deleting (for history)
+        pickup.status = PickupRequest.STATUS_REJECTED
+        pickup.save()
+        
+        logger.info(
+            'PickupRequest cancelled: id=%s user=%s', 
+            pickup.id, request.user.username
+        )
+        
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Pickup request cancelled successfully'
+        })
+        
+    except Exception as e:
+        logger.exception('cancel_pickup_request failed')
         return JsonResponse({'status': 'error', 'error': str(e)})
-
-
+    
 @csrf_exempt
 def compute_eta(request):
     """Compute ETA in minutes from the bus's current location to a pickup location.
@@ -1425,19 +1521,23 @@ def driver_notifications(request):
     driver = request.user.driver_profile
     pickups = PickupRequest.objects.filter(bus__driver=driver).order_by('-created_at')[:50]
     unread_count = PickupRequest.objects.filter(bus__driver=driver, seen_by_driver=False).count()
-    data = [
-        {
+    data = []
+    for p in pickups:
+        stop_index = p.get_stop_index()
+        pickup_data = {
             'id': p.id,
             'user_id': p.user.id,
             'user': p.user.username,
+            'user_username': p.user.username,
+            'stop_id': p.stop_obj.id if p.stop_obj else None,
             'stop': p.stop,
+            'stop_index': stop_index,
             'message': p.message,
             'status': p.status,
             'created_at': p.created_at.isoformat(),
             'seen': p.seen_by_driver,
         }
-        for p in pickups
-    ]
+        data.append(pickup_data)
     return JsonResponse({'status': 'success', 'pickups': data, 'unread_count': unread_count, 'recent': data[:10]})
 
 

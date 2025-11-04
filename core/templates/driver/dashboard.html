@@ -525,6 +525,228 @@
                 <div class="seat-info">
                     🟢 Click a seat to toggle availability | Green = Available | Red = Occupied
                 </div>
+                <!-- ⭐ NEW SECTION: Upcoming Stops with Pickup Requests -->
+<div class="dashboard-section" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border: 2px solid #10b981; margin-top: 30px;">
+    <h2 class="section-title" style="color: #065f46;">
+        🚏 Upcoming Stops - Pickup Requests
+    </h2>
+    
+    <div id="upcomingStopsContainer">
+        <div class="text-center text-gray-500 py-8">
+            <p>No upcoming pickup requests</p>
+            <small class="text-xs">Passengers' pickup requests will appear here</small>
+        </div>
+    </div>
+    
+    <div class="mt-4 p-3 bg-blue-50 border-l-4 border-blue-500 rounded">
+        <p class="text-sm text-blue-800">
+            <strong>💡 How it works:</strong> When passengers request pickup at specific stops, 
+            they'll appear here sorted by stop order along your route.
+        </p>
+    </div>
+</div>
+
+<style>
+/* ⭐ UPCOMING STOPS STYLES */
+
+.upcoming-stops-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.stop-card {
+    background: white;
+    border-radius: 10px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    border-left: 4px solid #10b981;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.stop-card:hover {
+    transform: translateX(5px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.stop-card.next-stop {
+    border-left-color: #ef4444;
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+}
+
+.stop-card.next-stop .stop-header {
+    color: #991b1b;
+}
+
+.stop-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.stop-name {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #065f46;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.stop-number {
+    background: #10b981;
+    color: white;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+
+.next-stop .stop-number {
+    background: #ef4444;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+}
+
+.passenger-count {
+    background: #3b82f6;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.passengers-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.passenger-item {
+    background: #f9fafb;
+    padding: 10px 12px;
+    border-radius: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border: 1px solid #e5e7eb;
+}
+
+.passenger-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.passenger-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.9rem;
+}
+
+.passenger-details {
+    display: flex;
+    flex-direction: column;
+}
+
+.passenger-name {
+    font-weight: 600;
+    color: #1f2937;
+    font-size: 0.95rem;
+}
+
+.passenger-time {
+    font-size: 0.75rem;
+    color: #6b7280;
+}
+
+.passenger-message {
+    font-size: 0.85rem;
+    color: #4b5563;
+    margin-top: 4px;
+    font-style: italic;
+}
+
+.reserve-btn {
+    background: #10b981;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.reserve-btn:hover {
+    background: #059669;
+    transform: translateY(-2px);
+}
+
+.reserve-btn.reserved {
+    background: #6b7280;
+    cursor: default;
+}
+
+.no-requests {
+    text-align: center;
+    padding: 40px 20px;
+    color: #9ca3af;
+}
+
+.no-requests i {
+    font-size: 3rem;
+    margin-bottom: 12px;
+    opacity: 0.3;
+}
+</style>
+<style>
+/* ⭐ ADD ANIMATION STYLES */
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOut {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+}
+</style>
+
             </div>
 
             <!-- Notifications Section -->
@@ -1150,6 +1372,361 @@ if (switchRouteBtn) {
         });
     });
 }
+{% endif %}
+{% if route and bus %}
+
+// ==================== ENHANCED UPCOMING STOPS WITH PICKUP REQUESTS ====================
+
+let currentStopIndex = 0;
+let pickupRequests = [];
+
+// ⭐ NEW: Get current available seats count
+function getAvailableSeatsCount() {
+    const availableSeats = document.querySelectorAll('.seat-btn.seat-available');
+    return availableSeats ? availableSeats.length : 0;
+}
+
+// ⭐ NEW: Check if request is within 1 hour
+function isWithinTimeFrame(timestamp) {
+    if (!timestamp) return false;
+    
+    try {
+        const requestTime = new Date(timestamp);
+        const now = new Date();
+        const hoursDiff = (now - requestTime) / (1000 * 60 * 60);
+        
+        return hoursDiff <= 1; // Only show requests from last 1 hour
+    } catch (e) {
+        return false;
+    }
+}
+
+// Function to organize and display pickup requests by stop
+function displayUpcomingStops() {
+    const container = document.getElementById('upcomingStopsContainer');
+    const availableSeats = getAvailableSeatsCount();
+    
+    // ⭐ Filter requests: within 1 hour only
+    const validRequests = pickupRequests.filter(p => isWithinTimeFrame(p.created_at));
+    
+    if (!validRequests || validRequests.length === 0) {
+        container.innerHTML = `
+            <div class="no-requests">
+                <i class="fas fa-inbox"></i>
+                <p>No recent pickup requests</p>
+                <small>Requests from last 1 hour will appear here</small>
+            </div>
+        `;
+        return;
+    }
+    
+    // Group requests by stop
+    const stopGroups = {};
+    
+    validRequests.forEach(request => {
+        const stopIndex = request.stop_index;
+        if (stopIndex === null || stopIndex === undefined) return;
+        
+        if (!stopGroups[stopIndex]) {
+            stopGroups[stopIndex] = {
+                stopName: request.stop,
+                stopIndex: stopIndex,
+                passengers: []
+            };
+        }
+        
+        stopGroups[stopIndex].passengers.push(request);
+    });
+    
+    // Sort stops by index (upcoming stops first)
+    const sortedStops = Object.values(stopGroups)
+        .filter(stop => stop.stopIndex >= currentStopIndex)
+        .sort((a, b) => a.stopIndex - b.stopIndex);
+    
+    if (sortedStops.length === 0) {
+        container.innerHTML = `
+            <div class="no-requests">
+                <i class="fas fa-check-circle"></i>
+                <p>No upcoming pickup requests</p>
+                <small>All requested stops have been passed</small>
+            </div>
+        `;
+        return;
+    }
+    
+    // ⭐ Show available seats warning at top
+    let html = '';
+    if (availableSeats === 0) {
+        html += `
+            <div class="alert alert-warning" style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; margin-bottom: 15px; border-radius: 6px;">
+                <strong>⚠️ Bus Full:</strong> No available seats. All reserve buttons disabled.
+            </div>
+        `;
+    } else if (availableSeats <= 3) {
+        html += `
+            <div class="alert alert-info" style="background: #dbeafe; border-left: 4px solid #3b82f6; padding: 12px; margin-bottom: 15px; border-radius: 6px;">
+                <strong>ℹ️ Low Seats:</strong> Only ${availableSeats} seat${availableSeats > 1 ? 's' : ''} available.
+            </div>
+        `;
+    }
+    
+    html += '<div class="upcoming-stops-list">';
+    
+    sortedStops.forEach((stop, index) => {
+        const isNextStop = index === 0;
+        
+        html += `
+            <div class="stop-card ${isNextStop ? 'next-stop' : ''}" data-stop-index="${stop.stopIndex}">
+                <div class="stop-header">
+                    <div class="stop-name">
+                        <span class="stop-number">${stop.stopIndex + 1}</span>
+                        ${isNextStop ? '🔴' : '🚏'} ${stop.stopName}
+                        ${isNextStop ? '<span style="color: #ef4444; font-size: 0.85rem; margin-left: 8px;">(NEXT STOP)</span>' : ''}
+                    </div>
+                    <div class="passenger-count">
+                        <i class="fas fa-users"></i>
+                        ${stop.passengers.length} ${stop.passengers.length === 1 ? 'passenger' : 'passengers'}
+                    </div>
+                </div>
+                
+                <div class="passengers-list">
+        `;
+        
+        stop.passengers.forEach(passenger => {
+            const initial = passenger.user_username ? passenger.user_username.charAt(0).toUpperCase() : 'U';
+            const timeAgo = getTimeAgo(passenger.created_at);
+            const isReserved = passenger.seat_reserved || false;
+            
+            html += `
+                <div class="passenger-item" data-pickup-id="${passenger.id}" data-reserved="${isReserved}">
+                    <div class="passenger-info">
+                        <div class="passenger-avatar">${initial}</div>
+                        <div class="passenger-details">
+                            <div class="passenger-name">👤 ${passenger.user_username || 'User #' + passenger.user_id}</div>
+                            <div class="passenger-time">⏰ ${timeAgo}</div>
+                            ${passenger.message ? `<div class="passenger-message">💬 "${passenger.message}"</div>` : ''}
+                        </div>
+                    </div>
+            `;
+            
+            // ⭐ Smart button logic
+            if (isReserved) {
+                html += `
+                    <button class="reserve-btn reserved" disabled>
+                        ✅ Seat Reserved
+                    </button>
+                `;
+            } else if (availableSeats === 0) {
+                html += `
+                    <button class="reserve-btn" disabled style="background: #9ca3af; cursor: not-allowed;">
+                        🚫 Bus Full
+                    </button>
+                `;
+            } else {
+                html += `
+                    <button class="reserve-btn" onclick="reserveSeatForPassenger(${passenger.id}, event)">
+                        💺 Reserve Seat
+                    </button>
+                `;
+            }
+            
+            html += `
+                </div>
+            `;
+        });
+        
+        html += `
+                </div>
+            </div>
+        `;
+    });
+    
+    html += '</div>';
+    
+    container.innerHTML = html;
+}
+
+// Helper function to get time ago
+function getTimeAgo(timestamp) {
+    if (!timestamp) return 'Just now';
+    
+    try {
+        const date = new Date(timestamp);
+        const now = new Date();
+        const seconds = Math.floor((now - date) / 1000);
+        
+        if (seconds < 60) return 'Just now';
+        if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+        return 'Over 1h ago'; // ⭐ Changed for clarity
+    } catch (e) {
+        return 'Recently';
+    }
+}
+
+// ⭐ ENHANCED: Actually reserve a seat
+function reserveSeatForPassenger(pickupId, event) {
+    const btn = event.target;
+    const originalText = btn.innerHTML;
+    
+    // Check if seats available
+    const availableSeats = document.querySelectorAll('.seat-btn.seat-available');
+    if (availableSeats.length === 0) {
+        alert('❌ No available seats! Bus is full.');
+        return;
+    }
+    
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Reserving...';
+    
+    // Find first available seat and toggle it
+    const firstAvailableSeat = availableSeats[0];
+    const seatId = firstAvailableSeat.getAttribute('data-seat-id');
+    
+    if (!seatId) {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        alert('❌ Error: Could not find available seat');
+        return;
+    }
+    
+    // Toggle the seat via API
+    fetch('/api/toggle_seat/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}',
+        },
+        body: JSON.stringify({ seat_id: seatId })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            // Update seat UI
+            firstAvailableSeat.classList.remove('seat-available');
+            firstAvailableSeat.classList.add('seat-occupied');
+            
+            // Update button
+            btn.innerHTML = '✅ Seat Reserved';
+            btn.classList.add('reserved');
+            
+            // Mark this pickup as reserved in memory
+            const pickupRequest = pickupRequests.find(p => p.id === pickupId);
+            if (pickupRequest) {
+                pickupRequest.seat_reserved = true;
+            }
+            
+            // Show success message
+            showNotification(`✅ Seat ${firstAvailableSeat.innerText} reserved successfully!`, 'success');
+            
+            // Refresh display to update seat count
+            setTimeout(() => {
+                displayUpcomingStops();
+            }, 500);
+            
+            console.log(`✅ Reserved seat ${firstAvailableSeat.innerText} for pickup ${pickupId}`);
+        } else {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            alert('❌ Failed to reserve seat. Please try again.');
+        }
+    })
+    .catch(error => {
+        console.error('Error reserving seat:', error);
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        alert('❌ Network error. Please try again.');
+    });
+}
+
+// ⭐ NEW: Show notification toast
+function showNotification(message, type) {
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 15px 20px;
+        background: ${type === 'success' ? '#10b981' : '#ef4444'};
+        color: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        z-index: 10000;
+        animation: slideIn 0.3s ease;
+    `;
+    notification.innerText = message;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
+}
+
+// Load initial pickup requests
+function loadPickupRequests() {
+    fetch('/driver/notifications/')
+        .then(r => r.json())
+        .then(data => {
+            if (data && data.status === 'success') {
+                // Filter: must have stop_id, stop_index, and be within 1 hour
+                pickupRequests = (data.pickups || []).filter(p => {
+                    return p.stop_id && 
+                           (p.stop_index !== null) && 
+                           isWithinTimeFrame(p.created_at);
+                });
+                
+                console.log('📋 Loaded pickup requests (last 1h):', pickupRequests.length);
+                displayUpcomingStops();
+            }
+        })
+        .catch(console.error);
+}
+
+// Listen for new pickup notifications via WebSocket
+if (typeof driverSocket !== 'undefined' && driverSocket) {
+    const originalOnMessage = driverSocket.onmessage;
+    
+    driverSocket.onmessage = function(e) {
+        const data = JSON.parse(e.data);
+        
+        // Handle pickup notifications
+        if (data.type === 'pickup_notification') {
+            if (data.stop_id && data.stop_index !== null) {
+                pickupRequests.push({
+                    id: data.pickup_id,
+                    user_id: data.user_id,
+                    user_username: data.user_username,
+                    stop: data.stop,
+                    stop_id: data.stop_id,
+                    stop_index: data.stop_index,
+                    message: data.message,
+                    created_at: new Date().toISOString(),
+                    seat_reserved: false
+                });
+                
+                displayUpcomingStops();
+                showNotification(`🔔 New pickup request at ${data.stop}`, 'success');
+                console.log('🔔 New pickup request at stop:', data.stop);
+            }
+        }
+        
+        // Call original handler if exists
+        if (originalOnMessage) {
+            originalOnMessage.call(this, e);
+        }
+    };
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadPickupRequests();
+    
+    // Refresh every 30 seconds and clean old requests
+    setInterval(() => {
+        loadPickupRequests();
+    }, 30000);
+});
+
 {% endif %}
 </script>
 {% endblock %}

@@ -192,9 +192,29 @@ class PickupRequest(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
     seen_by_driver = models.BooleanField(default=False)
+    stop_obj = models.ForeignKey(
+        Stop,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pickup_requests',
+        help_text="The actual Stop object if user selected from route stops"
+    )
 
     def __str__(self):
         return f"PickupRequest({self.user.username} -> {self.bus.number_plate} @ {self.stop})"
+    def get_stop_index(self):
+        """Get the index of this pickup stop in the bus route."""
+        if not self.stop_obj or not self.bus or not self.bus.route:
+            return None
+        try:
+            stops = self.bus.route.get_stops_list()
+            for idx, stop in enumerate(stops):
+                if stop.id == self.stop_obj.id:
+                    return idx
+            return None
+        except Exception:
+            return None
 
 
 class Message(models.Model):

@@ -581,13 +581,35 @@
                 </button>
             </div>
 
-            <!-- Pickup Request -->
-            <div class="pickup-section">
-                <h4 class="pickup-title">📍 Request Pickup</h4>
-                <div class="form-group">
-                    <label class="form-label">Pickup Location *</label>
-                    <textarea id="pickupStop" class="form-textarea" rows="2" placeholder="Enter your pickup location">{{ default_pickup }}</textarea>
-                </div>
+<!-- Pickup Request -->
+<div class="pickup-section">
+    <h4 class="pickup-title">📍 Request Pickup</h4>
+    
+    <!-- ⭐ NEW: Stop Selection Dropdown -->
+    <div class="form-group">
+        <label class="form-label">Select Your Pickup Stop *</label>
+        <select id="pickupStopSelect" class="form-input" style="max-width: 500px;">
+            <option value="">-- Choose a stop from route --</option>
+            {% if bus.route %}
+                {% for stop in bus.route.get_stops_list %}
+                    <option value="{{ stop.id }}" 
+                            data-stop-name="{{ stop.name }}"
+                            {% if default_pickup and stop.name == default_pickup %}selected{% endif %}>
+                        {{ forloop.counter }}. {{ stop.name }}
+                    </option>
+                {% endfor %}
+            {% endif %}
+        </select>
+        <small class="text-gray-600 block mt-1">
+            💡 Select the stop where you want to board the bus
+        </small>
+    </div>
+    
+    <div class="form-group">
+        <label class="form-label">Or Enter Custom Location</label>
+        <textarea id="pickupStop" class="form-textarea" rows="2" 
+                  placeholder="Enter custom pickup location (optional)">{{ default_pickup }}</textarea>
+    </div>
                 <div class="form-group">
                     <label class="form-label">Optional Message</label>
                     <input id="pickupMsg" class="form-input" placeholder="Add any special instructions" />
@@ -1301,49 +1323,73 @@ socket.onmessage = function(event) {
     // Pickup request functionality
     const sendPickupBtn = document.getElementById('sendPickup');
     if (sendPickupBtn) {
-        sendPickupBtn.addEventListener('click', function() {
-            const stop = document.getElementById('pickupStop').value.trim();
-            const message = document.getElementById('pickupMsg').value.trim();
-            
-            if (!stop) {
-                showToast('Please enter a pickup location', 'error');
-                return;
-            }
-
-            const originalText = sendPickupBtn.innerHTML;
-            sendPickupBtn.disabled = true;
-            sendPickupBtn.innerHTML = '⏳ Sending...';
-
-            fetch('/api/send_pickup/', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'X-CSRFToken': '{{ csrf_token }}'
-                },
-                body: 'bus_id=' + encodeURIComponent(busId) + 
-                      '&stop=' + encodeURIComponent(stop) + 
-                      '&message=' + encodeURIComponent(message)
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    showToast('Pickup request sent successfully!', 'success');
-                    document.getElementById('pickupMsg').value = '';
-                } else {
-                    showToast('Error: ' + (data.error || 'Failed to send request'), 'error');
-                }
-            })
-            .catch(error => {
-                console.error('Pickup request error:', error);
-                showToast('Network error', 'error');
-            })
-            .finally(() => {
-                sendPickupBtn.disabled = false;
-                sendPickupBtn.innerHTML = originalText;
-            });
-        });
+sendPickupBtn.addEventListener('click', function() {
+    const stopSelect = document.getElementById('pickupStopSelect');
+    const stopTextarea = document.getElementById('pickupStop');
+    const message = document.getElementById('pickupMsg').value.trim();
+    
+    let stopId = null;
+    let stopName = '';
+    
+    if (stopSelect && stopSelect.value) {
+        stopId = parseInt(stopSelect.value);
+        const selectedOption = stopSelect.options[stopSelect.selectedIndex];
+        stopName = selectedOption.getAttribute('data-stop-name');
+    } else if (stopTextarea && stopTextarea.value.trim()) {
+        stopName = stopTextarea.value.trim();
+    }
+    
+    if (!stopName) {
+        showToast('Please select a pickup stop', 'error');
+        return;
     }
 
+    const originalText = sendPickupBtn.innerHTML;
+    sendPickupBtn.disabled = true;
+    sendPickupBtn.innerHTML = '⏳ Sending...';
+
+    const formData = new FormData();
+    formData.append('bus_id', busId);
+    formData.append('stop', stopName);
+    formData.append('message', message);
+    if (stopId) {
+        formData.append('stop_id', stopId);
+    }
+
+    fetch('/api/send_pickup/', {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}'},
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            showToast('✅ Pickup request sent!', 'success');
+            document.getElementById('pickupMsg').value = '';
+            if (stopSelect) stopSelect.value = '';
+            if (stopTextarea) stopTextarea.value = '';
+        } else {
+            showToast('❌ ' + (data.error || 'Failed'), 'error');
+        }
+    })
+    .catch(error => {
+        showToast('❌ Network error', 'error');
+    })
+    .finally(() => {
+        sendPickupBtn.disabled = false;
+        sendPickupBtn.innerHTML = originalText;
+    });
+});
+
+// Auto-fill text when dropdown changes
+document.getElementById('pickupStopSelect')?.addEventListener('change', function() {
+    const selectedOption = this.options[this.selectedIndex];
+    const stopName = selectedOption.getAttribute('data-stop-name');
+    if (stopName) {
+        document.getElementById('pickupStop').value = stopName;
+    }
+});
+    }
     // Chat functionality
     const chatRoom = "{{ chat_room }}";
     let chatSocket = null;
