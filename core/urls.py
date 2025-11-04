@@ -63,4 +63,15 @@ urlpatterns = [
     path("api/switch_route/", views.switch_route, name="switch_route"),
     path("api/route_info/", views.get_route_info, name="get_route_info"),
     path("api/cancel_pickup/", views.cancel_pickup_request, name="cancel_pickup"),
+    path("api/reserve_seat/", views.reserve_seat_for_pickup, name="reserve_seat"),
+    path(
+        "api/cancel_pickup_request/",
+        views.cancel_pickup_request,
+        name="cancel_pickup_request",
+    ),
+    path(
+        "api/cancel_seat_reservation/",
+        views.cancel_seat_reservation,
+        name="cancel_seat_reservation",
+    ),
 ]

@@ -1291,7 +1291,7 @@ def send_pickup_request(request):
 
         # Create new pickup request
         pickup = PickupRequest.objects.create(
-            user=request.user, bus=bus, stop=stop, stop_obj=stop_obj, message=message
+            user=request.user, bus=bus, stop=stop, message=message
         )
 
         logger.info(
@@ -1337,43 +1337,230 @@ def send_pickup_request(request):
         logger.exception("send_pickup_request failed")
         return JsonResponse({"status": "error", "error": str(e)})
 
-# ⭐ NEW: Add endpoint to cancel pickup request
+
+@login_required
+@require_POST
+def reserve_seat_for_pickup(request):
+    """
+    Reserve a seat for a pickup request.
+    Driver clicks "Reserve Seat" button for a pickup request.
+    """
+    try:
+        # Verify user is a driver
+        if not hasattr(request.user, "driver_profile"):
+            return JsonResponse(
+                {"status": "error", "error": "Not a driver"}, status=403
+            )
+
+        pickup_id = int(request.POST.get("pickup_id"))
+        pickup = PickupRequest.objects.filter(id=pickup_id).first()
+
+        if not pickup:
+            return JsonResponse(
+                {"status": "error", "error": "Pickup request not found"}, status=404
+            )
+
+        # Verify driver owns this bus
+        if pickup.bus.driver != request.user.driver_profile:
+            return JsonResponse(
+                {"status": "error", "error": "Unauthorized"}, status=403
+            )
+
+        # Check if already reserved
+        if pickup.reserved_seat:
+            return JsonResponse(
+                {
+                    "status": "error",
+                    "error": f"Seat {pickup.reserved_seat.seat_number} already reserved for this pickup",
+                },
+                status=400,
+            )
+
+        # Find first available seat
+        available_seat = pickup.bus.seats.filter(is_available=True).first()
+
+        if not available_seat:
+            return JsonResponse(
+                {"status": "error", "error": "No available seats"}, status=400
+            )
+
+        # Reserve the seat
+        available_seat.is_available = False
+        available_seat.save(update_fields=["is_available"])
+
+        # Link seat to pickup request
+        pickup.reserved_seat = available_seat
+        pickup.status = PickupRequest.STATUS_ACK  # Mark as acknowledged
+        pickup.save(update_fields=["reserved_seat", "status"])
+
+        # Broadcast seat update to all tracking this bus
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"bus_{pickup.bus.id}",
+                {
+                    "type": "seat_update",
+                    "seat_id": available_seat.id,
+                    "is_available": False,
+                    "seat_number": available_seat.seat_number,
+                    "bus_id": pickup.bus.id,
+                },
+            )
+        except Exception as e:
+            logger.exception(f"Failed to broadcast seat update: {e}")
+
+        # Send confirmation message to user via WebSocket
+        try:
+            async_to_sync(channel_layer.group_send)(
+                f"user_{pickup.user.id}",
+                {
+                    "type": "chat_message_forward",
+                    "sender_id": request.user.id,
+                    "sender_name": "Driver",
+                    "recipient_id": pickup.user.id,
+                    "content": f"✅ Seat {available_seat.seat_number} reserved for you at {pickup.stop}",
+                    "bus_id": pickup.bus.id,
+                },
+            )
+        except Exception as e:
+            logger.exception(f"Failed to send confirmation message: {e}")
+
+        logger.info(
+            f"Driver {request.user.username} reserved seat {available_seat.seat_number} "
+            f"for pickup request {pickup_id} (user: {pickup.user.username})"
+        )
+
+        return JsonResponse(
+            {
+                "status": "success",
+                "seat_number": available_seat.seat_number,
+                "pickup_id": pickup.id,
+                "message": f"Seat {available_seat.seat_number} reserved successfully",
+            }
+        )
+
+    except Exception as e:
+        logger.exception(f"Reserve seat failed: {e}")
+        return JsonResponse({"status": "error", "error": str(e)}, status=500)
+
+
 @login_required
 @require_POST
 def cancel_pickup_request(request):
-    """Allow users to cancel their own pickup requests"""
+    """
+    Cancel a pickup request (user cancels before driver reserves seat)
+    """
     try:
-        pickup_id = int(request.POST.get('pickup_id'))
-        
-        pickup = PickupRequest.objects.filter(
-            id=pickup_id,
-            user=request.user  # Only owner can cancel
-        ).first()
-        
+        pickup_id = int(request.POST.get("pickup_id"))
+        pickup = PickupRequest.objects.filter(id=pickup_id).first()
+
         if not pickup:
-            return JsonResponse({
-                'status': 'error',
-                'error': 'Pickup request not found or you do not have permission'
-            })
-        
-        # Mark as rejected instead of deleting (for history)
-        pickup.status = PickupRequest.STATUS_REJECTED
-        pickup.save()
-        
-        logger.info(
-            'PickupRequest cancelled: id=%s user=%s', 
-            pickup.id, request.user.username
+            return JsonResponse(
+                {"status": "error", "error": "Pickup request not found"}, status=404
+            )
+
+        # Verify user owns this pickup
+        if pickup.user != request.user:
+            return JsonResponse(
+                {"status": "error", "error": "Unauthorized"}, status=403
+            )
+
+        # Can only cancel if no seat reserved yet
+        if pickup.reserved_seat:
+            return JsonResponse(
+                {
+                    "status": "error",
+                    "error": "Cannot cancel - seat already reserved. Use Cancel Reservation instead.",
+                },
+                status=400,
+            )
+
+        # Delete the pickup request
+        pickup.delete()
+
+        logger.info(f"User {request.user.username} canceled pickup request {pickup_id}")
+
+        return JsonResponse(
+            {"status": "success", "message": "Pickup request canceled successfully"}
         )
-        
-        return JsonResponse({
-            'status': 'success',
-            'message': 'Pickup request cancelled successfully'
-        })
-        
+
     except Exception as e:
-        logger.exception('cancel_pickup_request failed')
-        return JsonResponse({'status': 'error', 'error': str(e)})
-    
+        logger.exception(f"Cancel pickup request failed: {e}")
+        return JsonResponse({"status": "error", "error": str(e)}, status=500)
+
+
+@login_required
+@require_POST
+def cancel_seat_reservation(request):
+    """
+    Cancel a seat reservation (user cancels after driver reserved seat)
+    """
+    try:
+        pickup_id = int(request.POST.get("pickup_id"))
+        pickup = PickupRequest.objects.filter(id=pickup_id).first()
+
+        if not pickup:
+            return JsonResponse(
+                {"status": "error", "error": "Pickup request not found"}, status=404
+            )
+
+        # Verify user owns this pickup
+        if pickup.user != request.user:
+            return JsonResponse(
+                {"status": "error", "error": "Unauthorized"}, status=403
+            )
+
+        # Check if seat was reserved
+        if not pickup.reserved_seat:
+            return JsonResponse(
+                {"status": "error", "error": "No seat reservation to cancel"},
+                status=400,
+            )
+
+        seat = pickup.reserved_seat
+        seat_number = seat.seat_number
+
+        # Free the seat
+        seat.is_available = True
+        seat.save(update_fields=["is_available"])
+
+        # Delete the pickup request
+        pickup.delete()
+
+        # Broadcast seat update
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"bus_{pickup.bus.id}",
+                {
+                    "type": "seat_update",
+                    "seat_id": seat.id,
+                    "is_available": True,
+                    "seat_number": seat.seat_number,
+                    "bus_id": pickup.bus.id,
+                },
+            )
+        except Exception as e:
+            logger.exception(f"Failed to broadcast seat update: {e}")
+
+        logger.info(
+            f"User {request.user.username} canceled seat reservation {seat_number} "
+            f"for pickup {pickup_id}"
+        )
+
+        return JsonResponse(
+            {
+                "status": "success",
+                "seat_number": seat_number,
+                "message": f"Seat {seat_number} reservation canceled successfully",
+            }
+        )
+
+    except Exception as e:
+        logger.exception(f"Cancel seat reservation failed: {e}")
+        return JsonResponse({"status": "error", "error": str(e)}, status=500)
+
+
 @csrf_exempt
 def compute_eta(request):
     """Compute ETA in minutes from the bus's current location to a pickup location.
@@ -1519,24 +1706,34 @@ def driver_notifications(request):
     if not hasattr(request.user, 'driver_profile'):
         return JsonResponse({'status': 'error', 'error': 'Not a driver'})
     driver = request.user.driver_profile
-    pickups = PickupRequest.objects.filter(bus__driver=driver).order_by('-created_at')[:50]
+    pickups = PickupRequest.objects.filter(bus__driver=driver).select_related('reserved_seat', 'user', 'bus', 'bus__route').order_by('-created_at')[:50]
     unread_count = PickupRequest.objects.filter(bus__driver=driver, seen_by_driver=False).count()
     data = []
     for p in pickups:
         stop_index = p.get_stop_index()
         pickup_data = {
-            'id': p.id,
-            'user_id': p.user.id,
-            'user': p.user.username,
-            'user_username': p.user.username,
-            'stop_id': p.stop_obj.id if p.stop_obj else None,
-            'stop': p.stop,
-            'stop_index': stop_index,
-            'message': p.message,
-            'status': p.status,
-            'created_at': p.created_at.isoformat(),
-            'seen': p.seen_by_driver,
+            "id": p.id,
+            "user_id": p.user.id,
+            "user": p.user.username,
+            "user_username": p.user.username,
+            "pickup_id": p.id,
+            "stop_id": p.get_stop_obj().id if p.get_stop_obj() else None,
+            "stop": p.stop,
+            "stop_index": stop_index,
+            "message": p.message,
+            "status": p.status,
+            "created_at": p.created_at.isoformat(),
+            "seen": p.seen_by_driver,
+            "reserved_seat_number": (
+                p.reserved_seat.seat_number if p.reserved_seat else None
+            ),
         }
+        try:
+            stop_index = p.get_stop_index()
+            if stop_index is not None:
+                pickup_data['stop_index'] = stop_index
+        except:
+            pickup_data["stop_index"] = None
         data.append(pickup_data)
     return JsonResponse({'status': 'success', 'pickups': data, 'unread_count': unread_count, 'recent': data[:10]})
 

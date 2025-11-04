@@ -176,45 +176,69 @@ class Bookmark(models.Model):
 
 class PickupRequest(models.Model):
     """A user's pickup request/notification to a driver for a bus."""
-    STATUS_PENDING = 'pending'
-    STATUS_ACK = 'acknowledged'
-    STATUS_REJECTED = 'rejected'
+
+    STATUS_PENDING = "pending"
+    STATUS_ACK = "acknowledged"
+    STATUS_REJECTED = "rejected"
     STATUS_CHOICES = [
-        (STATUS_PENDING, 'Pending'),
-        (STATUS_ACK, 'Acknowledged'),
-        (STATUS_REJECTED, 'Rejected'),
+        (STATUS_PENDING, "Pending"),
+        (STATUS_ACK, "Acknowledged"),
+        (STATUS_REJECTED, "Rejected"),
     ]
 
-    user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='pickup_requests')
-    bus = models.ForeignKey(Bus, on_delete=models.CASCADE, related_name='pickup_requests')
+    user = models.ForeignKey(
+        "auth.User", on_delete=models.CASCADE, related_name="pickup_requests"
+    )
+    bus = models.ForeignKey(
+        Bus, on_delete=models.CASCADE, related_name="pickup_requests"
+    )
     stop = models.CharField(max_length=255)
     message = models.TextField(blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     seen_by_driver = models.BooleanField(default=False)
-    stop_obj = models.ForeignKey(
-        Stop,
+    reserved_seat = models.ForeignKey(
+        Seat,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='pickup_requests',
-        help_text="The actual Stop object if user selected from route stops"
+        related_name="reservations",
     )
+
+    # ⭐ REGULAR METHOD (not @property)
+    def get_stop_obj(self):
+        """Get the Stop object if stop matches a known stop name"""
+        if not self.stop:
+            return None
+        try:
+            return Stop.objects.filter(name__iexact=self.stop.strip()).first()
+        except Exception:
+            return None
+
+    def get_stop_index(self):
+        """Get the index of this stop in the bus route"""
+        stop_obj = self.get_stop_obj()  # ⭐ CHANGED
+
+        if not stop_obj or not self.bus or not self.bus.route:
+            return None
+
+        try:
+            stops = self.bus.route.get_stops_list()
+            for i, stop in enumerate(stops):
+                if stop.id == stop_obj.id:
+                    return i
+        except Exception as e:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.exception(f"Error getting stop index: {e}")
+
+        return None
 
     def __str__(self):
         return f"PickupRequest({self.user.username} -> {self.bus.number_plate} @ {self.stop})"
-    def get_stop_index(self):
-        """Get the index of this pickup stop in the bus route."""
-        if not self.stop_obj or not self.bus or not self.bus.route:
-            return None
-        try:
-            stops = self.bus.route.get_stops_list()
-            for idx, stop in enumerate(stops):
-                if stop.id == self.stop_obj.id:
-                    return idx
-            return None
-        except Exception:
-            return None
 
 
 class Message(models.Model):

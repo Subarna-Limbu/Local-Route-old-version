@@ -171,7 +171,49 @@
         font-size: 0.9rem;
         margin-top: 10px;
     }
+/* Cancel Buttons */
+.cancel-request-btn {
+    background: #ef4444;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+}
 
+.cancel-request-btn:hover:not(:disabled) {
+    background: #dc2626;
+    transform: translateY(-2px);
+}
+
+.cancel-request-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.request-status-badge {
+    display: inline-block;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: 600;
+    margin-top: 10px;
+}
+
+.status-pending {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.status-reserved {
+    background: #d1fae5;
+    color: #065f46;
+}
     /* User Actions Section */
     .actions-section {
         background: white;
@@ -581,7 +623,7 @@
                 </button>
             </div>
 
-<!-- Pickup Request -->
+{% comment %} <!-- Pickup Request -->
 <div class="pickup-section">
     <h4 class="pickup-title">📍 Request Pickup</h4>
     
@@ -618,7 +660,60 @@
                     📤 Send Pickup Request
                 </button>
             </div>
+        </div> {% endcomment %}
+<!-- Pickup Request -->
+<div class="pickup-section">
+    <h4 class="pickup-title">📍 Request Pickup</h4>
+    
+    <!-- Request Status Display -->
+    <div id="pickupStatusDisplay" style="display: none;">
+        <div class="request-status-badge status-pending" id="statusBadge">
+            <span id="statusText">⏳ Request Pending</span>
         </div>
+    </div>
+    
+    <!-- Request Form -->
+    <div id="pickupFormSection">
+        <!-- ⭐ STOPS DROPDOWN -->
+        <div class="form-group">
+            <label class="form-label">Pickup Stop *</label>
+            <select id="pickupStopSelect" class="form-input" style="width: 100%; max-width: 500px;">
+                <option value="">Select your pickup stop</option>
+                {% if bus.route %}
+                    {% for stop in bus.route.get_stops_list %}
+                        <option value="{{ stop.name }}" {% if default_pickup == stop.name %}selected{% endif %}>
+                            {{ stop.name }}
+                        </option>
+                    {% endfor %}
+                {% endif %}
+            </select>
+        </div>
+        
+        <!-- Optional: Custom location (if stop not in list) -->
+        <div class="form-group">
+            <label class="form-label">Or Enter Custom Location</label>
+            <input id="pickupCustom" class="form-input" placeholder="Enter custom pickup location (optional)" />
+            <small style="color: #6b7280; font-size: 0.85rem;">Only use this if your stop is not in the list above</small>
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Optional Message</label>
+            <input id="pickupMsg" class="form-input" placeholder="Add any special instructions" />
+        </div>
+        
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <button id="sendPickup" class="send-btn" style="flex: 1;">
+                📤 Send Pickup Request
+            </button>
+            <button id="cancelPickupRequest" class="cancel-request-btn" style="flex: 1; display: none;">
+                ❌ Cancel Request
+            </button>
+            <button id="cancelReservation" class="cancel-request-btn" style="flex: 1; display: none;">
+                🚫 Cancel Reservation
+            </button>
+        </div>
+    </div>
+</div>
 
         <!-- Chat Section -->
         <div class="chat-section">
@@ -1320,7 +1415,7 @@ socket.onmessage = function(event) {
         });
     }
 
-    // Pickup request functionality
+    {% comment %} // Pickup request functionality
     const sendPickupBtn = document.getElementById('sendPickup');
     if (sendPickupBtn) {
 sendPickupBtn.addEventListener('click', function() {
@@ -1389,7 +1484,227 @@ document.getElementById('pickupStopSelect')?.addEventListener('change', function
         document.getElementById('pickupStop').value = stopName;
     }
 });
+    } {% endcomment %}
+     // ==================== PICKUP REQUEST STATE MANAGEMENT ====================
+
+let currentPickupId = null;
+let currentPickupStatus = 'none'; // 'none', 'pending', 'reserved'
+
+
+// Send Pickup Request - UPDATED VERSION
+const sendPickupBtn = document.getElementById('sendPickup');
+if (sendPickupBtn) {
+    sendPickupBtn.addEventListener('click', function() {
+        // ⭐ Get stop from dropdown OR custom input
+        const stopSelect = document.getElementById('pickupStopSelect').value.trim();
+        const stopCustom = document.getElementById('pickupCustom').value.trim();
+        const stop = stopSelect || stopCustom;  // Prefer dropdown
+        
+        const message = document.getElementById('pickupMsg').value.trim();
+        
+        if (!stop) {
+            showToast('Please select a pickup stop or enter a custom location', 'error');
+            return;
+        }
+
+        const originalText = sendPickupBtn.innerHTML;
+        sendPickupBtn.disabled = true;
+        sendPickupBtn.innerHTML = '⏳ Sending...';
+
+        fetch('/api/send_pickup/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: 'bus_id=' + encodeURIComponent(busId) + 
+                  '&stop=' + encodeURIComponent(stop) + 
+                  '&message=' + encodeURIComponent(message)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                currentPickupId = data.pickup_id;
+                currentPickupStatus = 'pending';
+                updatePickupUI();
+                
+                showToast('Pickup request sent successfully!', 'success');
+                document.getElementById('pickupMsg').value = '';
+            } else {
+                showToast('Error: ' + (data.error || 'Failed to send request'), 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Pickup request error:', error);
+            showToast('Network error', 'error');
+        })
+        .finally(() => {
+            sendPickupBtn.disabled = false;
+            sendPickupBtn.innerHTML = originalText;
+        });
+    });
+}
+
+// Cancel Pickup Request (before reservation)
+const cancelPickupBtn = document.getElementById('cancelPickupRequest');
+if (cancelPickupBtn) {
+    cancelPickupBtn.addEventListener('click', function() {
+        if (!currentPickupId) return;
+        
+        if (!confirm('Cancel your pickup request?')) return;
+        
+        this.disabled = true;
+        this.textContent = '⏳ Canceling...';
+        
+        fetch('/api/cancel_pickup_request/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: 'pickup_id=' + encodeURIComponent(currentPickupId)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                currentPickupId = null;
+                currentPickupStatus = 'none';
+                updatePickupUI();
+                showToast('Pickup request canceled', 'success');
+            } else {
+                showToast('Error: ' + (data.error || 'Failed to cancel'), 'error');
+                this.disabled = false;
+                this.textContent = '❌ Cancel Request';
+            }
+        })
+        .catch(error => {
+            console.error('Cancel error:', error);
+            showToast('Network error', 'error');
+            this.disabled = false;
+            this.textContent = '❌ Cancel Request';
+        });
+    });
+}
+
+// Cancel Reservation (after driver reserved)
+const cancelReservationBtn = document.getElementById('cancelReservation');
+if (cancelReservationBtn) {
+    cancelReservationBtn.addEventListener('click', function() {
+        if (!currentPickupId) return;
+        
+        if (!confirm('Cancel your seat reservation? The seat will become available for others.')) return;
+        
+        this.disabled = true;
+        this.textContent = '⏳ Canceling...';
+        
+        fetch('/api/cancel_seat_reservation/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: 'pickup_id=' + encodeURIComponent(currentPickupId)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                currentPickupId = null;
+                currentPickupStatus = 'none';
+                updatePickupUI();
+                showToast(`Seat ${data.seat_number} reservation canceled`, 'success');
+            } else {
+                showToast('Error: ' + (data.error || 'Failed to cancel'), 'error');
+                this.disabled = false;
+                this.textContent = '🚫 Cancel Reservation';
+            }
+        })
+        .catch(error => {
+            console.error('Cancel error:', error);
+            showToast('Network error', 'error');
+            this.disabled = false;
+            this.textContent = '🚫 Cancel Reservation';
+        });
+    });
+}
+
+// Update UI based on pickup status
+function updatePickupUI() {
+    const statusDisplay = document.getElementById('pickupStatusDisplay');
+    const statusBadge = document.getElementById('statusBadge');
+    const statusText = document.getElementById('statusText');
+    const sendBtn = document.getElementById('sendPickup');
+    const cancelRequestBtn = document.getElementById('cancelPickupRequest');
+    const cancelReservationBtn = document.getElementById('cancelReservation');
+    const pickupStopSelect = document.getElementById('pickupStopSelect');
+    const pickupCustom = document.getElementById('pickupCustom');
+    const pickupMsgInput = document.getElementById('pickupMsg');
+    
+    if (currentPickupStatus === 'none') {
+        // No request - show form
+        statusDisplay.style.display = 'none';
+        sendBtn.style.display = 'flex';
+        sendBtn.disabled = false;
+        cancelRequestBtn.style.display = 'none';
+        cancelReservationBtn.style.display = 'none';
+        if (pickupStopSelect) pickupStopSelect.disabled = false;
+        if (pickupCustom) pickupCustom.disabled = false;
+        if (pickupMsgInput) pickupMsgInput.disabled = false;
+        
+    } else if (currentPickupStatus === 'pending') {
+        // Request sent, awaiting driver
+        statusDisplay.style.display = 'block';
+        statusBadge.className = 'request-status-badge status-pending';
+        statusText.textContent = '⏳ Request Sent - Waiting for Driver';
+        sendBtn.style.display = 'none';
+        cancelRequestBtn.style.display = 'flex';
+        cancelReservationBtn.style.display = 'none';
+        if (pickupStopSelect) pickupStopSelect.disabled = true;
+        if (pickupCustom) pickupCustom.disabled = true;
+        if (pickupMsgInput) pickupMsgInput.disabled = true;
+        
+    } else if (currentPickupStatus === 'reserved') {
+        // Seat reserved by driver
+        statusDisplay.style.display = 'block';
+        statusBadge.className = 'request-status-badge status-reserved';
+        statusText.textContent = '✅ Seat Reserved for You!';
+        sendBtn.style.display = 'none';
+        cancelRequestBtn.style.display = 'none';
+        cancelReservationBtn.style.display = 'flex';
+        if (pickupStopSelect) pickupStopSelect.disabled = true;
+        if (pickupCustom) pickupCustom.disabled = true;
+        if (pickupMsgInput) pickupMsgInput.disabled = true;
     }
+}
+
+// Listen for seat reservation confirmation via chat
+if (chatSocket) {
+    const originalOnMessage = chatSocket.onmessage;
+    chatSocket.onmessage = function(event) {
+        // Call original handler
+        if (originalOnMessage) {
+            originalOnMessage.call(chatSocket, event);
+        }
+        
+        // Check if this is a reservation confirmation
+        try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'chat_message' && 
+                data.content && 
+                data.content.includes('Seat') && 
+                data.content.includes('reserved for you')) {
+                
+                // Update status to reserved
+                currentPickupStatus = 'reserved';
+                updatePickupUI();
+            }
+        } catch (e) {
+            // Ignore parse errors
+        }
+    };
+}
+
+// Initialize UI
+updatePickupUI();
     // Chat functionality
     const chatRoom = "{{ chat_room }}";
     let chatSocket = null;
