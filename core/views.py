@@ -1259,27 +1259,19 @@ def send_pickup_request(request):
         # ⭐ NEW: Check for recent duplicate requests (within 1 hour)
         one_hour_ago = timezone.now() - timedelta(hours=1)
 
-        existing_request = PickupRequest.objects.filter(
+        # Delete all old pending requests from this user for this bus
+        old_requests = PickupRequest.objects.filter(
             user=request.user,
             bus=bus,
-            created_at__gte=one_hour_ago,
+            created_at__lt=one_hour_ago,
             status=PickupRequest.STATUS_PENDING,
-        ).first()
-
-        if existing_request:
-            # User already has an active request for this bus
-            time_diff = (
-                timezone.now() - existing_request.created_at
-            ).total_seconds() / 60
-            return JsonResponse(
-                {
-                    "status": "error",
-                    "error": f"You already have an active pickup request for this bus from {int(time_diff)} minutes ago. Please wait or cancel the previous request.",
-                    "existing_request_id": existing_request.id,
-                    "existing_stop": existing_request.stop,
-                }
+        )
+        deleted_count = old_requests.count()
+        if deleted_count > 0:
+            logger.info(
+                f"Auto-deleted {deleted_count} old pickup request(s) for user {request.user.username} on bus {bus.number_plate}"
             )
-
+            old_requests.delete()
         # Resolve stop_obj
         stop_obj = None
         if stop_id:
